@@ -24,6 +24,7 @@ class WorkerConfig(BaseModel):
     url: str
     healthy: bool = True
     last_check: float = 0.0
+    last_error: str = ""
 
 
 class RouterConfig(BaseModel):
@@ -63,10 +64,31 @@ class WorkerPool:
                 ) as resp:
                     if resp.status == 200:
                         text = await resp.text()
-                        return text.strip() == "pong"
-        except Exception:
-            pass
-        return False
+                        text_stripped = text.strip()
+                        if text_stripped == "pong":
+                            worker.last_error = ""
+                            print(f"✓ Worker {worker.url} is healthy")
+                            return True
+                        else:
+                            worker.last_error = f"Unexpected response: {repr(text_stripped)}"
+                            print(f"✗ Worker {worker.url} returned unexpected text: {repr(text_stripped)}")
+                            return False
+                    else:
+                        worker.last_error = f"HTTP {resp.status}"
+                        print(f"✗ Worker {worker.url} returned status {resp.status}")
+                        return False
+        except asyncio.TimeoutError:
+            worker.last_error = "Connection timeout (5s)"
+            print(f"✗ Worker {worker.url} timed out")
+            return False
+        except aiohttp.ClientConnectorError as e:
+            worker.last_error = f"Connection failed: {str(e)}"
+            print(f"✗ Worker {worker.url} connection error: {e}")
+            return False
+        except Exception as e:
+            worker.last_error = f"Error: {str(e)}"
+            print(f"✗ Worker {worker.url} error: {e}")
+            return False
 
     async def update_health_status(self):
         """Periodically update health status of all workers."""
@@ -127,12 +149,20 @@ async def startup_event():
     config = load_config()
     worker_pool = WorkerPool(config)
 
-    # Start background health check task
-    asyncio.create_task(worker_pool.update_health_status())
-
     print(f"Router started with {len(worker_pool.workers)} workers:")
     for w in worker_pool.workers:
         print(f"  - {w.url}")
+
+    # Perform initial health check on all workers
+    print("\nPerforming initial health checks...")
+    for worker in worker_pool.workers:
+        await worker_pool.health_check(worker)
+
+    healthy_count = sum(1 for w in worker_pool.workers if w.healthy)
+    print(f"\nInitial health check complete: {healthy_count}/{len(worker_pool.workers)} workers healthy")
+
+    # Start background health check task
+    asyncio.create_task(worker_pool.update_health_status())
 
 
 @app.get("/")
@@ -142,7 +172,12 @@ async def root():
         "service": "SandboxFusion Router",
         "version": "1.0.0",
         "workers": [
-            {"url": w.url, "healthy": w.healthy}
+            {
+                "url": w.url,
+                "healthy": w.healthy,
+                "last_check": w.last_check,
+                "last_error": w.last_error
+            }
             for w in worker_pool.workers
         ]
     }
