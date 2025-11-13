@@ -1,0 +1,21 @@
+# SandboxFusion Router Configuration
+
+# List of worker servers
+workers:
+  - url: http://server1.example.com:8080
+  - url: http://server2.example.com:8080
+  - url: http://server3.example.com:8080
+  # Add more workers as needed
+
+# Health check interval in seconds
+# Workers are checked for health every N seconds
+health_check_interval: 30
+
+# Request timeout in seconds
+# Maximum time to wait for a worker to respond
+timeout: 300
+
+# Routing strategy: "round_robin" or "random"
+# - round_robin: Distribute requests evenly across workers
+# - random: Randomly select a healthy worker for each request
+routing_strategy: round_robin
